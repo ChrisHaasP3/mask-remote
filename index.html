@@ -171,13 +171,16 @@ body.off .needs{opacity:.45}
     <div class="grow">
       <div class="row"><label>Fit</label>
         <select id="photoFit" class="grow"><option value="cover">Fill (crop)</option><option value="contain">Fit whole picture</option></select></div>
-      <div class="row"><label>Zoom</label><input type="range" id="photoZoom" min="100" max="300" value="100"></div>
-      <div class="row"><label>Up/down</label><input type="range" id="photoY" min="-50" max="50" value="0"></div>
+      <div class="row"><label>Zoom</label><input type="range" id="photoZoom" min="100" max="600" value="100"></div>
+      <div class="row"><label>Left↔right</label><input type="range" id="photoX" min="-100" max="100" value="0"></div>
+      <div class="row"><label>Up↕down</label><input type="range" id="photoY" min="-100" max="100" value="0"></div>
       <div class="row"><label>Color boost</label><input type="range" id="photoSat" min="100" max="250" value="140"></div>
       <div class="row"><label>Save to slot</label><select id="photoSlot"></select></div>
     </div>
   </div>
   <div class="row"><button class="primary grow" id="btnPhoto" disabled>Upload picture to mask</button></div>
+  <div class="row"><button class="grow" id="btnThumbOnly" disabled>Save as slot preview only (no upload)</button></div>
+  <p class="hint">Preview only: for pictures already on the mask from the app. Screenshot the app's custom-image list, pick it here, zoom/pan to one picture, choose its slot, and tap this. Nothing is sent to the mask.</p>
   <p class="hint">The mask is 46×58 pixels. Bold, high-contrast pictures on a dark background look best. Uploading saves into the chosen slot (it overwrites whatever is there) and then shows it.</p>
 </section>
 
@@ -287,6 +290,7 @@ async function gattConnect() {
   log(`connected. cmd write=${p.write} writeNoResp=${p.writeWithoutResponse}; upload=${!!uploadChar}`);
   manualDisconnect = false;
   setConnected(true);
+  enqueue(checkDiyCount);
 }
 
 async function onDisconnected() {
@@ -435,6 +439,31 @@ function showDiyThumb(slot) {
   b.querySelector('.thumb').style.backgroundImage = `url(${diyThumbs[slot]})`;
 }
 Object.keys(diyThumbs).forEach(s => showDiyThumb(+s));
+function saveDiyThumb(slot) {
+  diyThumbs[slot] = $('photoPreview').toDataURL('image/png');
+  store.set('mask.diyThumbs', diyThumbs);
+  showDiyThumb(slot);
+}
+$('btnThumbOnly').onclick = () => {
+  const slot = +$('photoSlot').value;
+  saveDiyThumb(slot);
+  log(`preview saved for custom slot ${slot} (nothing sent to the mask)`);
+};
+
+// Ask the mask how many custom pictures it holds (CHEC -> count) and dim the empty slots.
+// Reply layout isn't documented; we look for "CHEC" then take the next byte, and log the raw reply.
+async function checkDiyCount() {
+  const reply = waitFor(s => s.startsWith('CHEC'), 2000);
+  await sendCmd('CHEC');
+  try {
+    const {plain} = await reply;
+    const count = plain[5];
+    if (count >= 1 && count <= DIY_COUNT) {   // ignore 0: more likely a misparse than an empty mask
+      [...$('diyGrid').children].forEach((b, i) => b.style.opacity = i < count ? '' : '.35');
+      log(`mask has ${count} custom picture(s)`);
+    }
+  } catch { log('no CHEC reply'); }
+}
 const rand = n => 1 + Math.floor(Math.random() * n);
 // Wrap within 1..max so stepping never lands on out-of-bounds (garbled) numbers.
 const wrap = (n, max) => ((((n | 0) - 1) % max) + max) % max + 1;
@@ -599,11 +628,15 @@ $('photo').onchange = () => {
   const f = $('photo').files[0];
   if (!f) return;
   const img = new Image();
-  img.onload = () => { photoImg = img; $('btnPhoto').disabled = false; drawPhoto(); URL.revokeObjectURL(img.src); };
+  img.onload = () => {
+    photoImg = img; $('btnPhoto').disabled = false; $('btnThumbOnly').disabled = false;
+    $('photoZoom').value = 100; $('photoX').value = 0; $('photoY').value = 0;
+    drawPhoto(); URL.revokeObjectURL(img.src);
+  };
   img.onerror = () => log('could not read that picture');
   img.src = URL.createObjectURL(f);
 };
-['photoFit', 'photoZoom', 'photoY', 'photoSat'].forEach(id => $(id).addEventListener('input', drawPhoto));
+['photoFit', 'photoZoom', 'photoX', 'photoY', 'photoSat'].forEach(id => $(id).addEventListener('input', drawPhoto));
 
 function drawPhoto() {
   const cv = $('photoPreview'), ctx = cv.getContext('2d', {willReadFrequently: true});
@@ -613,10 +646,12 @@ function drawPhoto() {
   const base = $('photoFit').value === 'cover' ? Math.max(PW / iw, PH / ih) : Math.min(PW / iw, PH / ih);
   const s = base * (+$('photoZoom').value / 100);
   const w = iw * s, h = ih * s;
-  const y = (PH - h) / 2 + (+$('photoY').value / 100) * Math.max(h, PH) / 2;
+  // Pan sliders run -100..100: -100 shows the left/top edge of the picture, +100 the right/bottom edge.
+  const x = (PW - w) / 2 * (1 + +$('photoX').value / 100);
+  const y = (PH - h) / 2 * (1 + +$('photoY').value / 100);
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.filter = `saturate(${+$('photoSat').value}%)`;
-  ctx.drawImage(photoImg, (PW - w) / 2, y, w, h);
+  ctx.drawImage(photoImg, x, y, w, h);
   ctx.filter = 'none';
 }
 
@@ -664,9 +699,7 @@ async function uploadPhoto() {
   await sendCmd('DATCP', [(t >>> 24) & 255, (t >>> 16) & 255, (t >>> 8) & 255, t & 255]);
   await done.catch(() => log('no DATCPOK (may still have worked)'));
   await sendCmd('PLAY', [1, slot]);
-  diyThumbs[slot] = $('photoPreview').toDataURL('image/png');
-  store.set('mask.diyThumbs', diyThumbs);
-  showDiyThumb(slot);
+  saveDiyThumb(slot);
   log(`picture sent to slot ${slot}`);
 }
 $('btnPhoto').onclick = () => {
