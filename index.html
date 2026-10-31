@@ -473,9 +473,23 @@ async function uploadText() {
   }
   await sendCmd('MODE', [+$('mode').value]);
   await sendCmd('SPEED', [+$('speed').value]);
+  await applyTextColor();
   log('text sent');
 }
 $('btnUpload').onclick = () => { stopParty(); enqueue(uploadText); };
+
+// The mask keeps its own text-color state (FC front color + M gradient effect, possibly left on by
+// the app), which overrides the per-column colors we upload. Set both explicitly every time:
+// solid color -> FC on with that color; Rainbow -> FC off so the uploaded rainbow columns show.
+// The M effect is switched off unless one is picked in "Effect".
+async function applyTextColor() {
+  const m = +$('mEffect').value;
+  await sendCmd('M', m < 0 ? [0, 0] : [1, m]);
+  if ($('rainbow').checked) await sendCmd('FC', [0, 0, 0, 0]);
+  else await sendCmd('FC', [1, ...rgb('txtColor')]);
+}
+$('txtColor').addEventListener('change', () => { $('rainbow').checked = false; drawPreview(); enqueue(applyTextColor); });
+$('rainbow').addEventListener('change', () => enqueue(applyTextColor));
 
 // ---------- picture upload ----------
 // Format confirmed by decoding Bishop Fox's captured fox face (2026-10-31):
