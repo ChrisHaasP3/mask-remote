@@ -110,6 +110,39 @@ body.off .needs{opacity:.45}
 </section>
 
 <section class="needs">
+  <h2>Music reactive</h2>
+  <div class="row"><label>Style</label>
+    <select id="visMode" class="grow">
+      <option value="1">Full bars (red center)</option>
+      <option value="0">Bars (red center)</option>
+      <option value="2">Bars (turquoise center)</option>
+      <option value="3">Bars (turquoise edges)</option>
+      <option value="4">Horizontal bars</option>
+    </select></div>
+  <div class="row"><label>Sensitivity</label><input type="range" id="visSens" min="0" max="40" value="20"></div>
+  <div class="row"><label><input type="checkbox" id="visMirror" checked> Mirror (bass in the middle)</label></div>
+  <canvas id="visCanvas" width="280" height="64" style="width:100%;height:64px;background:#000;border-radius:6px;display:block"></canvas>
+  <div class="row"><button class="primary grow" id="visBtn">Start music mode</button></div>
+  <p class="hint">Listens through the phone's microphone. Nothing is recorded; only bar heights go to the mask. The screen stays on while it runs.</p>
+</section>
+
+<section class="needs">
+  <h2>Shake to change</h2>
+  <div class="row">
+    <label><input type="checkbox" id="shakeOn"> Shake phone →</label>
+    <select id="shakeAction" class="grow">
+      <option value="list">random from playlist</option>
+      <option value="seq">next in playlist</option>
+      <option value="anim">random animation</option>
+      <option value="img">random face</option>
+      <option value="vis">next music style</option>
+    </select>
+  </div>
+  <div class="row"><label>Sensitivity</label><input type="range" id="shakeSens" min="6" max="20" value="12"></div>
+  <p class="hint">Testing the mask's own gesture sensor: connect, wave at the sensor, and check the log for a line marked ⚡. If one shows up, the page can react to gestures too.</p>
+</section>
+
+<section class="needs">
   <h2>Scrolling text</h2>
   <div class="row"><input type="text" id="txt" maxlength="60" value="HAPPY HALLOWEEN" autocomplete="off"></div>
   <div class="row">
@@ -211,6 +244,8 @@ const SVC = 0xfff0;
 const CMD_UUID    = 'd44bc439-abfd-45a2-b575-925416129600';
 const NOTIFY_UUID = 'd44bc439-abfd-45a2-b575-925416129601';
 const UPLOAD_UUID = 'd44bc439-abfd-45a2-b575-92541612960a';
+const AUDIO_UUID  = 'd44bc439-abfd-45a2-b575-92541612960b';
+let audioChar = null;
 // Fixed AES-128 key shared by every Shining Mask (public; see docs/systems/halloween-mask.md)
 const KEY = new Uint8Array('32672f7974ad43451d9c6c894a0e8764'.match(/../g).map(h => parseInt(h, 16)));
 // Counts confirmed on our mask (2026-10-31). The BrickCraftDream doc's 0x69/0x45 thresholds are these
@@ -281,6 +316,7 @@ async function gattConnect() {
   const svc = await server.getPrimaryService(SVC);
   cmdChar = await svc.getCharacteristic(CMD_UUID);
   uploadChar = await svc.getCharacteristic(UPLOAD_UUID).catch(() => null);
+  audioChar = await svc.getCharacteristic(AUDIO_UUID).catch(() => null);
   try {
     notifyChar = await svc.getCharacteristic(NOTIFY_UUID);
     notifyChar.addEventListener('characteristicvaluechanged', onNotify);
@@ -315,9 +351,11 @@ async function writeChar(ch, data, preferResponse) {
 
 // Serialize all GATT traffic: concurrent writes throw "GATT operation already in progress".
 let queue = Promise.resolve();
+let pendingOps = 0;   // music frames skip while commands are in flight, so they never collide
 function enqueue(fn) {
+  pendingOps++;
   const run = queue.then(fn);
-  queue = run.catch(e => log('error: ' + e.message));
+  queue = run.catch(e => log('error: ' + e.message)).finally(() => pendingOps--);
   return run;
 }
 
@@ -355,6 +393,7 @@ async function onNotify(e) {
   log(`← ${text.replace(/[^\x20-\x7e]/g, '·') || '?'} [${hex(plain)}]`);
   const hit = waiters.find(w => w.pred(text));
   if (hit) { waiters = waiters.filter(x => x !== hit); hit.resolve({text, plain}); }
+  else if (!/OK|^(PLAY|REOK|DATS|DATCP|CHEC|DELE|LIGHT|IMAG|ANIM|MODE|SPEED)/.test(text)) log(`⚡ unexpected message from mask: ${text || '?'} [${hex(plain)}]`);
 }
 
 // ---------- grids ----------
@@ -397,9 +436,10 @@ function buildGrid(el, count, kind, onPick) {
 }
 // The mask numbers built-ins from 0 (confirmed 2026-10-31: tile 5 sent IMAG 5 and showed the 6th
 // preview). The page labels them 1..N to match the app, so send n-1.
-function showAnim(n) { $('animNum').value = n; cmd('ANIM', [n - 1]); }
-function showImg(n)  { $('imgNum').value = n;  cmd('IMAG', [n - 1]); }
-function showDiy(n)  { cmd('PLAY', [1, n]); }
+let lastShown = null;   // re-shown when music mode stops
+function showAnim(n) { lastShown = `a:${n}`; $('animNum').value = n; cmd('ANIM', [n - 1]); }
+function showImg(n)  { lastShown = `i:${n}`; $('imgNum').value = n;  cmd('IMAG', [n - 1]); }
+function showDiy(n)  { lastShown = `d:${n}`; cmd('PLAY', [1, n]); }
 buildGrid($('animGrid'), ANIM_COUNT, 'a', showAnim);
 buildGrid($('imgGrid'), IMG_COUNT, 'i', showImg);
 buildGrid($('diyGrid'), DIY_COUNT, 'd', showDiy);
@@ -507,6 +547,7 @@ function stopParty() { clearInterval(partyTimer); partyTimer = null; $('partyBtn
 $('partyBtn').onclick = () => {
   if (partyTimer) return stopParty();
   if ($('partySrc').value === 'list' && !playlist.size) { log('playlist is empty - tap "Choose playlist" first'); return; }
+  if (musicOn) stopMusic();
   const secs = Math.max(2, +$('partySecs').value || 8);
   partyTick();
   partyTimer = setInterval(partyTick, secs * 1000);
@@ -774,6 +815,171 @@ $('previewsFile').onchange = async () => {
 (async () => {
   try { const b = await idbGet('previews'); if (b) await applyPreviews(b); } catch {}
 })();
+
+// ---------- music reactive ----------
+// Audio frame (BrickCraftDream ble-protocol.md), AES-ECB encrypted, written to ...960b:
+//   [0x0f][mode 0-4][14 bytes = 28 nibbles, one bar each, 0x0 off .. 0xf full]; nibble 0 = high nibble of byte 2.
+// Some modes ignore certain nibbles or clip off-screen ones, so only the visible ones get driven.
+const range = n => [...Array(n).keys()];
+const VIS = {
+  0: {bars: range(23).filter(i => i % 3 !== 2), max: 15},
+  1: {bars: range(28), max: 15},
+  2: {bars: range(23).filter(i => i < 2 || i % 2 === 1), max: 15},
+  3: {bars: range(23).filter(i => i < 2 || i % 2 === 1), max: 15},
+  4: {bars: range(28).filter(i => i % 3 !== 2), max: 12},   // values over 0xc show as off in this mode
+};
+let musicOn = false, audioCtx = null, micStream = null, analyser = null, visTimer = null, audioBusy = false;
+let wakeLock = null;
+const shown = new Array(28).fill(0);
+
+async function keepAwake(on) {
+  try {
+    if (on && !wakeLock && navigator.wakeLock) {
+      wakeLock = await navigator.wakeLock.request('screen');
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
+    } else if (!on && wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch {}
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && musicOn) keepAwake(true); });
+
+function applySensitivity() {
+  if (!analyser) return;
+  analyser.maxDecibels = -10 - +$('visSens').value;   // higher sensitivity -> quieter sound fills the bars
+  analyser.minDecibels = analyser.maxDecibels - 55;
+}
+$('visSens').addEventListener('input', applySensitivity);
+
+async function startMusic() {
+  if (!connected) { log('not connected'); return; }
+  if (!audioChar) { log('this mask has no audio-visualizer channel'); return; }
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}});
+  } catch (e) { log('microphone blocked: ' + e.message); return; }
+  stopParty();
+  audioCtx = new AudioContext();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 2048;
+  analyser.smoothingTimeConstant = 0.55;
+  applySensitivity();
+  audioCtx.createMediaStreamSource(micStream).connect(analyser);
+  musicOn = true;
+  keepAwake(true);
+  $('visBtn').textContent = 'Stop music mode';
+  visTimer = setInterval(visTick, 50);   // ~20 frames/s
+  log('music mode on');
+}
+
+async function stopMusic() {
+  musicOn = false;
+  clearInterval(visTimer); visTimer = null;
+  micStream?.getTracks().forEach(t => t.stop()); micStream = null;
+  try { await audioCtx?.close(); } catch {}
+  audioCtx = null; analyser = null;
+  keepAwake(false);
+  $('visBtn').textContent = 'Start music mode';
+  shown.fill(0); drawBars();
+  if (connected) {
+    await sendVisFrame(new Array(28).fill(0)).catch(() => {});
+    if (lastShown) playKey(lastShown);
+  }
+  log('music mode off');
+}
+$('visBtn').onclick = () => musicOn ? stopMusic() : startMusic();
+
+function visTick() {
+  if (!analyser || !connected) return;   // keeps the mic running across a reconnect
+  const mode = +$('visMode').value, spec = VIS[mode];
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(data);
+  const binHz = audioCtx.sampleRate / analyser.fftSize;
+  const n = spec.bars.length, mirror = $('visMirror').checked;
+  const bands = mirror ? Math.ceil(n / 2) : n;
+  // Log-spaced bands 60 Hz - 8 kHz; take the loudest bin in each so beats punch through.
+  const level = range(bands).map(b => {
+    const lo = 60 * Math.pow(8000 / 60, b / bands), hi = 60 * Math.pow(8000 / 60, (b + 1) / bands);
+    const i0 = Math.floor(lo / binHz), i1 = Math.max(i0 + 1, Math.floor(hi / binHz));
+    let m = 0;
+    for (let i = i0; i < i1 && i < data.length; i++) m = Math.max(m, data[i]);
+    return m / 255;
+  });
+  const nib = new Array(28).fill(0);
+  spec.bars.forEach((pos, k) => {
+    const b = mirror ? Math.min(bands - 1, Math.round(Math.abs(k - (n - 1) / 2) * 2 * (bands - 1) / Math.max(1, n - 1))) : k;
+    const target = Math.round(level[b] * spec.max);
+    shown[pos] = Math.max(target, shown[pos] - 1);   // quick rise, gentle fall
+    nib[pos] = Math.min(spec.max, shown[pos]);
+  });
+  drawBars();
+  if (!audioBusy && pendingOps === 0) sendVisFrame(nib).catch(e => log('music frame failed: ' + e.message));
+}
+
+async function sendVisFrame(nib) {
+  if (!audioChar) return;
+  audioBusy = true;
+  try {
+    const pt = new Uint8Array(16);
+    pt[0] = 0x0f; pt[1] = +$('visMode').value;
+    for (let j = 0; j < 14; j++) pt[2 + j] = (nib[2 * j] << 4) | nib[2 * j + 1];
+    await writeChar(audioChar, await ecbEnc(pt), false);
+  } finally { audioBusy = false; }
+}
+
+function drawBars() {
+  const cv = $('visCanvas'), ctx = cv.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+  const w = cv.width / 28;
+  shown.forEach((v, i) => {
+    const h = (v / 15) * cv.height;
+    ctx.fillStyle = `hsl(${20 + i * 9},90%,55%)`;
+    ctx.fillRect(i * w + 1, cv.height - h, w - 2, h);
+  });
+}
+drawBars();
+
+// ---------- shake to change ----------
+let lastShake = 0, seqIdx = 0;
+function onMotion(e) {
+  let mag;
+  const a = e.acceleration;
+  if (a && a.x != null) mag = Math.hypot(a.x, a.y, a.z);
+  else {
+    const g = e.accelerationIncludingGravity;
+    if (!g || g.x == null) return;
+    mag = Math.abs(Math.hypot(g.x, g.y, g.z) - 9.81);
+  }
+  const threshold = 26 - +$('shakeSens').value;   // m/s^2; sensitivity 12 -> 14 m/s^2
+  if (mag > threshold && Date.now() - lastShake > 1200) { lastShake = Date.now(); shakeAction(); }
+}
+function shakeAction() {
+  if (!connected) return;
+  const act = $('shakeAction').value;
+  log(`shake → ${act}`);
+  if (act === 'vis') {
+    const sel = $('visMode');
+    sel.selectedIndex = (sel.selectedIndex + 1) % sel.options.length;
+    return;
+  }
+  if (musicOn) stopMusic();
+  if (act === 'list') { if (!randomFromPlaylist()) showAnim(rand(ANIM_COUNT)); }
+  else if (act === 'seq') {
+    const l = [...playlist];
+    l.length ? playKey(l[seqIdx++ % l.length]) : showAnim(rand(ANIM_COUNT));
+  }
+  else if (act === 'anim') showAnim(rand(ANIM_COUNT));
+  else showImg(rand(IMG_COUNT));
+}
+$('shakeOn').onchange = async () => {
+  if ($('shakeOn').checked) {
+    if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+      try { if (await DeviceMotionEvent.requestPermission() !== 'granted') { $('shakeOn').checked = false; return; } } catch { $('shakeOn').checked = false; return; }
+    }
+    window.addEventListener('devicemotion', onMotion);
+    log('shake detection on');
+  } else {
+    window.removeEventListener('devicemotion', onMotion);
+    log('shake detection off');
+  }
+};
 
 // ---------- connection buttons ----------
 $('btnConnect').onclick = () => connected ? null : connect(false);
