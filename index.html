@@ -28,6 +28,14 @@ button.sel{outline:2px solid var(--accent);outline-offset:-2px}
 .grid.thumbs button{padding:4px 0 2px;line-height:1}
 .grid.thumbs .thumb{display:block}
 .grid.thumbs .num{font-size:11px;color:var(--muted)}
+.grid button.hasthumb{padding:4px 0 2px;line-height:1}
+.grid button.hasthumb .thumb{display:block;background-size:46px 58px;background-position:center}
+.grid button{position:relative}
+.grid button.inlist{border-color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent)}
+.grid button.inlist::after{content:"★";position:absolute;top:2px;right:4px;color:var(--accent);font-size:13px}
+#plDone{display:none;position:fixed;left:16px;right:16px;bottom:16px;z-index:10;box-shadow:0 6px 24px #000a}
+body.editing #plDone{display:block}
+body.editing .grid button{border-style:dashed}
 input[type=range]{flex:1;accent-color:var(--accent);min-width:120px}
 input[type=text],input[type=number],select{font:inherit;color:var(--text);background:#0e0913;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:44px;min-width:0}
 input[type=text]{flex:1}
@@ -83,6 +91,7 @@ body.off .needs{opacity:.45}
   <h2>Party mode</h2>
   <div class="row">
     <select id="partySrc">
+      <option value="list">My playlist</option>
       <option value="anim">Random animations</option>
       <option value="img">Random faces</option>
       <option value="both">Both</option>
@@ -92,6 +101,12 @@ body.off .needs{opacity:.45}
     <label>s</label>
   </div>
   <div class="row"><button id="partyBtn" class="grow">Start party mode</button></div>
+  <div class="row">
+    <button id="plEdit" class="grow">Choose playlist</button>
+    <button id="plRand">Random pick</button>
+    <button id="plClear">Clear</button>
+  </div>
+  <p class="hint" id="plStatus"></p>
 </section>
 
 <section class="needs">
@@ -184,6 +199,8 @@ body.off .needs{opacity:.45}
   <h2 style="margin-top:14px">Log</h2>
   <pre id="log"></pre>
 </section>
+
+<button class="primary" id="plDone">Done choosing</button>
 
 <script>
 'use strict';
@@ -337,19 +354,85 @@ async function onNotify(e) {
 }
 
 // ---------- grids ----------
-function buildGrid(el, count, onPick) {
+// ---------- playlist (per-phone convenience, localStorage) ----------
+// Keys: 'a:N' animation, 'i:N' face, 'd:N' custom slot.
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+const playlist = new Set(store.get('mask.playlist', []));
+let editing = false, lastKey = null;
+const LABEL = {a: 'animation', i: 'face', d: 'custom'};
+function savePlaylist() {
+  store.set('mask.playlist', [...playlist]);
+  const parts = ['a', 'i', 'd'].map(t => [t, [...playlist].filter(k => k[0] === t).length]).filter(([, c]) => c);
+  $('plStatus').textContent = playlist.size
+    ? `Playlist: ${parts.map(([t, c]) => `${c} ${LABEL[t]}${c > 1 ? 's' : ''}`).join(', ')}`
+    : 'Playlist is empty. Tap "Choose playlist", then tap tiles in any grid.';
+  $('plDone').textContent = `Done choosing (${playlist.size})`;
+}
+
+function buildGrid(el, count, kind, onPick) {
   for (let i = 1; i <= count; i++) {
     const b = document.createElement('button');
+    const key = `${kind}:${i}`;
+    b.dataset.key = key;
+    b.classList.toggle('inlist', playlist.has(key));
     b.innerHTML = `<span class="thumb"></span><span class="num">${i}</span>`;
-    b.onclick = () => { el.querySelectorAll('.sel').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); onPick(i); };
+    b.onclick = () => {
+      if (editing) {
+        playlist.has(key) ? playlist.delete(key) : playlist.add(key);
+        b.classList.toggle('inlist', playlist.has(key));
+        savePlaylist();
+        return;
+      }
+      el.querySelectorAll('.sel').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); onPick(i);
+    };
     el.appendChild(b);
   }
 }
 function showAnim(n) { $('animNum').value = n; cmd('ANIM', [n]); }
 function showImg(n)  { $('imgNum').value = n;  cmd('IMAG', [n]); }
-buildGrid($('animGrid'), ANIM_COUNT, showAnim);
-buildGrid($('imgGrid'), IMG_COUNT, showImg);
-buildGrid($('diyGrid'), DIY_COUNT, n => cmd('PLAY', [1, n]));
+function showDiy(n)  { cmd('PLAY', [1, n]); }
+buildGrid($('animGrid'), ANIM_COUNT, 'a', showAnim);
+buildGrid($('imgGrid'), IMG_COUNT, 'i', showImg);
+buildGrid($('diyGrid'), DIY_COUNT, 'd', showDiy);
+
+function playKey(key) {
+  const [t, n] = [key[0], +key.slice(2)];
+  t === 'a' ? showAnim(n) : t === 'i' ? showImg(n) : showDiy(n);
+  document.querySelectorAll('.grid .sel').forEach(x => x.classList.remove('sel'));
+  document.querySelector(`.grid button[data-key="${key}"]`)?.classList.add('sel');
+}
+function randomFromPlaylist() {
+  const l = [...playlist];
+  if (!l.length) { log('playlist is empty'); return false; }
+  let k;
+  do { k = l[Math.floor(Math.random() * l.length)]; } while (l.length > 1 && k === lastKey);
+  lastKey = k;
+  playKey(k);
+  return true;
+}
+$('plEdit').onclick = () => { editing = true; document.body.classList.add('editing'); stopParty(); savePlaylist(); };
+$('plDone').onclick = () => { editing = false; document.body.classList.remove('editing'); };
+$('plRand').onclick = () => randomFromPlaylist();
+$('plClear').onclick = () => {
+  playlist.clear();
+  document.querySelectorAll('.grid .inlist').forEach(b => b.classList.remove('inlist'));
+  savePlaylist();
+};
+if (!playlist.size) $('partySrc').value = 'anim';
+savePlaylist();
+
+// Custom-slot thumbnails: remembered on this phone when a picture is uploaded from this page.
+const diyThumbs = store.get('mask.diyThumbs', {});
+function showDiyThumb(slot) {
+  const b = $('diyGrid').children[slot - 1];
+  if (!b || !diyThumbs[slot]) return;
+  b.classList.add('hasthumb');
+  b.querySelector('.thumb').style.backgroundImage = `url(${diyThumbs[slot]})`;
+}
+Object.keys(diyThumbs).forEach(s => showDiyThumb(+s));
 const rand = n => 1 + Math.floor(Math.random() * n);
 // Wrap within 1..max so stepping never lands on out-of-bounds (garbled) numbers.
 const wrap = (n, max) => ((((n | 0) - 1) % max) + max) % max + 1;
@@ -385,12 +468,14 @@ $('mEffect').onchange = () => {
 let partyTimer = null;
 function partyTick() {
   const src = $('partySrc').value;
+  if (src === 'list') { if (!randomFromPlaylist()) stopParty(); return; }
   const useAnim = src === 'anim' || (src === 'both' && Math.random() < 0.5);
   useAnim ? showAnim(rand(ANIM_COUNT)) : showImg(rand(IMG_COUNT));
 }
 function stopParty() { clearInterval(partyTimer); partyTimer = null; $('partyBtn').textContent = 'Start party mode'; }
 $('partyBtn').onclick = () => {
   if (partyTimer) return stopParty();
+  if ($('partySrc').value === 'list' && !playlist.size) { log('playlist is empty - tap "Choose playlist" first'); return; }
   const secs = Math.max(2, +$('partySecs').value || 8);
   partyTick();
   partyTimer = setInterval(partyTick, secs * 1000);
@@ -577,6 +662,9 @@ async function uploadPhoto() {
   await sendCmd('DATCP', [(t >>> 24) & 255, (t >>> 16) & 255, (t >>> 8) & 255, t & 255]);
   await done.catch(() => log('no DATCPOK (may still have worked)'));
   await sendCmd('PLAY', [1, slot]);
+  diyThumbs[slot] = $('photoPreview').toDataURL('image/png');
+  store.set('mask.diyThumbs', diyThumbs);
+  showDiyThumb(slot);
   log(`picture sent to slot ${slot}`);
 }
 $('btnPhoto').onclick = () => {
