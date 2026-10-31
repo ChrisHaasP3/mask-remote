@@ -391,8 +391,10 @@ function buildGrid(el, count, kind, onPick) {
     el.appendChild(b);
   }
 }
-function showAnim(n) { $('animNum').value = n; cmd('ANIM', [n]); }
-function showImg(n)  { $('imgNum').value = n;  cmd('IMAG', [n]); }
+// The mask numbers built-ins from 0 (confirmed 2026-10-31: tile 5 sent IMAG 5 and showed the 6th
+// preview). The page labels them 1..N to match the app, so send n-1.
+function showAnim(n) { $('animNum').value = n; cmd('ANIM', [n - 1]); }
+function showImg(n)  { $('imgNum').value = n;  cmd('IMAG', [n - 1]); }
 function showDiy(n)  { cmd('PLAY', [1, n]); }
 buildGrid($('animGrid'), ANIM_COUNT, 'a', showAnim);
 buildGrid($('imgGrid'), IMG_COUNT, 'i', showImg);
