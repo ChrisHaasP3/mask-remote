@@ -23,6 +23,11 @@ button.sel{outline:2px solid var(--accent);outline-offset:-2px}
 .grow{flex:1}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(50px,1fr));gap:6px;max-height:252px;overflow:auto;padding:2px}
 .grid button{padding:6px 0}
+.thumb{display:none;width:52px;height:64px;margin:0 auto;background-repeat:no-repeat;image-rendering:pixelated}
+.grid.thumbs{grid-template-columns:repeat(auto-fill,minmax(62px,1fr));max-height:440px}
+.grid.thumbs button{padding:4px 0 2px;line-height:1}
+.grid.thumbs .thumb{display:block}
+.grid.thumbs .num{font-size:11px;color:var(--muted)}
 input[type=range]{flex:1;accent-color:var(--accent);min-width:120px}
 input[type=text],input[type=number],select{font:inherit;color:var(--text);background:#0e0913;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:44px;min-width:0}
 input[type=text]{flex:1}
@@ -173,6 +178,9 @@ body.off .needs{opacity:.45}
     <button id="btnDisc">Disconnect</button>
   </div>
   <p class="hint">Use Chrome on Android, or the Bluefy browser on iPhone. Close the Shining Mask app first: the mask only takes one connection at a time.</p>
+  <h2 style="margin-top:14px">Preview pictures</h2>
+  <div class="row"><input type="file" id="previewsFile" accept="image/png" class="grow"></div>
+  <p class="hint" id="previewsStatus">Load mask-previews.png once to see thumbnails. It's stored on this phone only.</p>
   <h2 style="margin-top:14px">Log</h2>
   <pre id="log"></pre>
 </section>
@@ -332,7 +340,7 @@ async function onNotify(e) {
 function buildGrid(el, count, onPick) {
   for (let i = 1; i <= count; i++) {
     const b = document.createElement('button');
-    b.textContent = i;
+    b.innerHTML = `<span class="thumb"></span><span class="num">${i}</span>`;
     b.onclick = () => { el.querySelectorAll('.sel').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); onPick(i); };
     el.appendChild(b);
   }
@@ -576,6 +584,73 @@ $('btnPhoto').onclick = () => {
   $('btnPhoto').disabled = true;
   enqueue(uploadPhoto).finally(() => { $('btnPhoto').disabled = false; $('btnPhoto').textContent = 'Upload picture to mask'; });
 };
+
+// ---------- preview thumbnails ----------
+// mask-previews.png is built from the Shining Mask app's own preview bitmaps (v1.2.7). It's the vendor's
+// artwork, so it is NOT published with this page: the user loads it once and it's kept in IndexedDB.
+// Sheet layout (cell 52x64): rows 0-6 = faces, 10 per row (app index i -> mask number i+1);
+// rows 7-51 = one animation per row, frames left to right.
+const CW = 52, CH = 64, SHEET_W = 624, SHEET_H = 3328;
+const ANIM_FRAMES = [10,10,10,10,11,10,12,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,9,4,10,4,10];
+let animTimer = null;
+
+function idb() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('mask-remote', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+}
+async function idbGet(k) {
+  const db = await idb();
+  return new Promise((res, rej) => { const q = db.transaction('kv').objectStore('kv').get(k); q.onsuccess = () => res(q.result); q.onerror = () => rej(q.error); });
+}
+async function idbSet(k, v) {
+  const db = await idb();
+  return new Promise((res, rej) => { const t = db.transaction('kv', 'readwrite'); t.objectStore('kv').put(v, k); t.oncomplete = () => res(); t.onerror = () => rej(t.error); });
+}
+
+function applyPreviews(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      if (img.naturalWidth !== SHEET_W || img.naturalHeight !== SHEET_H) { reject(new Error('not the mask-previews.png file')); return; }
+      const thumbs = (grid, pos) => grid.querySelectorAll('.thumb').forEach((t, i) => {
+        t.style.backgroundImage = `url(${url})`;
+        const [cx, cy] = pos(i);
+        t.style.backgroundPosition = `${-cx * CW}px ${-cy * CH}px`;
+      });
+      thumbs($('imgGrid'), i => [i % 10, Math.floor(i / 10)]);
+      thumbs($('animGrid'), i => [0, 7 + i]);
+      $('imgGrid').classList.add('thumbs');
+      $('animGrid').classList.add('thumbs');
+      clearInterval(animTimer);
+      let f = 0;
+      const animThumbs = $('animGrid').querySelectorAll('.thumb');
+      animTimer = setInterval(() => {
+        f++;
+        animThumbs.forEach((t, i) => { t.style.backgroundPosition = `${-(f % ANIM_FRAMES[i]) * CW}px ${-(7 + i) * CH}px`; });
+      }, 160);
+      $('previewsStatus').textContent = 'Thumbnails loaded (saved on this phone).';
+      resolve();
+    };
+    img.onerror = () => reject(new Error('could not read that file'));
+    img.src = url;
+  });
+}
+
+$('previewsFile').onchange = async () => {
+  const f = $('previewsFile').files[0];
+  if (!f) return;
+  try {
+    await applyPreviews(f);
+    try { await idbSet('previews', f); } catch (e) { log('could not save previews on this phone: ' + e.message); }
+  } catch (e) { $('previewsStatus').textContent = e.message; }
+};
+(async () => {
+  try { const b = await idbGet('previews'); if (b) await applyPreviews(b); } catch {}
+})();
 
 // ---------- connection buttons ----------
 $('btnConnect').onclick = () => connected ? null : connect(false);
