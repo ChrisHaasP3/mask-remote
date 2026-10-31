@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#120c18">
+<title>Mask Remote</title>
+<style>
+:root{--bg:#120c18;--panel:#1d1426;--line:#3a2a4a;--text:#f3ecf8;--muted:#a898b8;--accent:#ff7a18;--ok:#3ddc84;--bad:#ff4d6d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding:0 16px 80px}
+header{display:flex;align-items:center;gap:10px;position:sticky;top:0;background:var(--bg);padding:12px 0;z-index:5;border-bottom:1px solid var(--line)}
+h1{font-size:20px;margin:0;flex:1}
+.dot{width:12px;height:12px;border-radius:50%;background:var(--bad);flex:none}
+.dot.on{background:var(--ok)}
+section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin:12px 0}
+h2{font-size:13px;margin:0 0 10px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em}
+button{font:inherit;color:var(--text);background:#2a1d38;border:1px solid var(--line);border-radius:10px;padding:10px 12px;min-height:44px;cursor:pointer;touch-action:manipulation}
+button.primary{background:var(--accent);border-color:var(--accent);color:#1a0f00;font-weight:700}
+button:active{transform:scale(.96)}
+button.sel{outline:2px solid var(--accent);outline-offset:-2px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0}
+.grow{flex:1}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(50px,1fr));gap:6px;max-height:252px;overflow:auto;padding:2px}
+.grid button{padding:6px 0}
+input[type=range]{flex:1;accent-color:var(--accent);min-width:120px}
+input[type=text],input[type=number],select{font:inherit;color:var(--text);background:#0e0913;border:1px solid var(--line);border-radius:10px;padding:10px;min-height:44px;min-width:0}
+input[type=text]{flex:1}
+input[type=number]{width:80px}
+input[type=color]{width:52px;height:44px;border:1px solid var(--line);border-radius:10px;background:none;padding:2px}
+label{color:var(--muted);font-size:14px}
+.val{min-width:3ch;text-align:right;font-variant-numeric:tabular-nums}
+#log{font:12px/1.35 ui-monospace,Consolas,monospace;white-space:pre-wrap;max-height:240px;overflow:auto;color:var(--muted);margin:0}
+#preview{width:100%;height:auto;image-rendering:pixelated;background:#000;border-radius:6px;display:block}
+.hint{color:var(--muted);font-size:13px;margin:6px 0 0}
+body.off .needs{opacity:.45}
+</style>
+</head>
+<body class="off">
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Mask Remote</h1>
+  <button class="primary" id="btnConnect">Connect</button>
+</header>
+
+<section class="needs">
+  <h2>Brightness</h2>
+  <div class="row">
+    <input type="range" id="light" min="1" max="100" value="60">
+    <span class="val" id="lightVal">60</span>
+  </div>
+  <p class="hint">Above ~100 the mask starts to flicker.</p>
+</section>
+
+<section class="needs">
+  <h2>Animations</h2>
+  <div class="row">
+    <button id="animPrev">◀</button>
+    <input type="number" id="animNum" min="0" max="255" value="1">
+    <button id="animNext">▶</button>
+    <button id="animRand" class="grow">Random</button>
+  </div>
+  <div class="grid" id="animGrid"></div>
+</section>
+
+<section class="needs">
+  <h2>Faces (still images)</h2>
+  <div class="row">
+    <button id="imgPrev">◀</button>
+    <input type="number" id="imgNum" min="0" max="255" value="1">
+    <button id="imgNext">▶</button>
+    <button id="imgRand" class="grow">Random</button>
+  </div>
+  <div class="grid" id="imgGrid"></div>
+</section>
+
+<section class="needs">
+  <h2>Party mode</h2>
+  <div class="row">
+    <select id="partySrc">
+      <option value="anim">Random animations</option>
+      <option value="img">Random faces</option>
+      <option value="both">Both</option>
+    </select>
+    <label>every</label>
+    <input type="number" id="partySecs" min="2" max="600" value="8">
+    <label>s</label>
+  </div>
+  <div class="row"><button id="partyBtn" class="grow">Start party mode</button></div>
+</section>
+
+<section class="needs">
+  <h2>Scrolling text</h2>
+  <div class="row"><input type="text" id="txt" maxlength="60" value="HAPPY HALLOWEEN" autocomplete="off"></div>
+  <div class="row">
+    <label>Color</label><input type="color" id="txtColor" value="#ff7a18">
+    <label><input type="checkbox" id="rainbow"> Rainbow</label>
+    <label class="grow" style="text-align:right">Size</label>
+    <select id="fontSize"><option>12</option><option>13</option><option selected>14</option><option>15</option><option>16</option></select>
+  </div>
+  <canvas id="preview" height="16"></canvas>
+  <div class="row"><button class="primary grow" id="btnUpload">Send text to mask</button></div>
+  <div class="row">
+    <label>Mode</label>
+    <select id="mode" class="grow">
+      <option value="3">Scroll ←</option>
+      <option value="4">Scroll →</option>
+      <option value="2">Blink</option>
+      <option value="1">Steady</option>
+    </select>
+  </div>
+  <div class="row">
+    <label>Speed</label>
+    <input type="range" id="speed" min="0" max="255" value="120">
+    <span class="val" id="speedVal">120</span>
+  </div>
+  <h2 style="margin-top:14px">Text style</h2>
+  <div class="row">
+    <label>Front color</label><input type="color" id="fcColor" value="#ff7a18">
+    <button id="fcOn">Use</button><button id="fcOff">Off (uploaded colors)</button>
+  </div>
+  <div class="row">
+    <label>Background</label><input type="color" id="bcColor" value="#000000">
+    <button id="bcOn">Use</button><button id="bcOff">Off</button>
+  </div>
+  <div class="row">
+    <label>Effect</label>
+    <select id="mEffect" class="grow">
+      <option value="-1">None</option>
+      <option value="0">Random dots</option>
+      <option value="1">Rainbow edges</option>
+      <option value="2">Yellow → blue fade</option>
+      <option value="3">Green → blue circle</option>
+      <option value="4">Background image 1</option>
+      <option value="5">Background image 2</option>
+      <option value="6">Background image 3</option>
+      <option value="7">Background image 4</option>
+    </select>
+  </div>
+  <details>
+    <summary class="hint">Debug: text looks scrambled?</summary>
+    <div class="row"><label><input type="checkbox" id="swapBytes"> Swap top/bottom halves in bitmap</label></div>
+  </details>
+</section>
+
+<section class="needs">
+  <h2>Saved custom images (from the app)</h2>
+  <div class="grid" id="diyGrid"></div>
+</section>
+
+<section>
+  <h2>Connection</h2>
+  <div class="row">
+    <button id="btnAll">Connect (show all devices)</button>
+    <button id="btnDisc">Disconnect</button>
+  </div>
+  <p class="hint">Use Chrome on Android, or the Bluefy browser on iPhone. Close the Shining Mask app first: the mask only takes one connection at a time.</p>
+  <h2 style="margin-top:14px">Log</h2>
+  <pre id="log"></pre>
+</section>
+
+<script>
+'use strict';
+const SVC = 0xfff0;
+const CMD_UUID    = 'd44bc439-abfd-45a2-b575-925416129600';
+const NOTIFY_UUID = 'd44bc439-abfd-45a2-b575-925416129601';
+const UPLOAD_UUID = 'd44bc439-abfd-45a2-b575-92541612960a';
+// Fixed AES-128 key shared by every Shining Mask (public; see docs/systems/halloween-mask.md)
+const KEY = new Uint8Array('32672f7974ad43451d9c6c894a0e8764'.match(/../g).map(h => parseInt(h, 16)));
+const IMG_COUNT = 105, ANIM_COUNT = 69, DIY_COUNT = 20;
+
+const $ = id => document.getElementById(id);
+const logEl = $('log');
+function log(msg) {
+  const t = new Date().toLocaleTimeString([], {hour12:false});
+  logEl.textContent = `${t} ${msg}\n` + logEl.textContent.slice(0, 8000);
+}
+const hex = b => Array.from(b, x => x.toString(16).padStart(2, '0')).join('');
+
+// ---------- AES-128-ECB via WebCrypto ----------
+// WebCrypto has no ECB. For ONE block, AES-CBC with a zero IV gives ECB in the first 16 output bytes.
+// Decrypt: CBC-decrypt [C, E(pad ^ C)] with zero IV; block 2 decrypts to a valid PKCS7 pad and is stripped.
+let aesKey = null;
+async function initCrypto() {
+  if (!window.crypto?.subtle) { log('ERROR: crypto.subtle missing - page must be served over https'); return; }
+  aesKey = await crypto.subtle.importKey('raw', KEY, {name: 'AES-CBC'}, false, ['encrypt', 'decrypt']);
+}
+const ZERO_IV = new Uint8Array(16);
+async function ecbEnc(block) {
+  const out = await crypto.subtle.encrypt({name: 'AES-CBC', iv: ZERO_IV}, aesKey, block);
+  return new Uint8Array(out).slice(0, 16);
+}
+async function ecbDec(c) {
+  const x = new Uint8Array(16);
+  for (let i = 0; i < 16; i++) x[i] = 0x10 ^ c[i];
+  const buf = new Uint8Array(32);
+  buf.set(c); buf.set(await ecbEnc(x), 16);
+  return new Uint8Array(await crypto.subtle.decrypt({name: 'AES-CBC', iv: ZERO_IV}, aesKey, buf));
+}
+
+// ---------- BLE ----------
+let device = null, cmdChar = null, notifyChar = null, uploadChar = null, connected = false;
+let manualDisconnect = false;
+
+function setConnected(on) {
+  connected = on;
+  $('dot').classList.toggle('on', on);
+  document.body.classList.toggle('off', !on);
+  $('btnConnect').textContent = on ? (device?.name || 'Connected') : (device ? 'Reconnect' : 'Connect');
+}
+
+async function connect(showAll) {
+  if (!navigator.bluetooth) {
+    log('Web Bluetooth not available here. Use Chrome on Android (or Bluefy on iPhone), over https.');
+    return;
+  }
+  try {
+    if (!device || showAll) {
+      const opts = showAll
+        ? {acceptAllDevices: true, optionalServices: [SVC]}
+        : {filters: [{namePrefix: 'MASK'}, {services: [SVC]}], optionalServices: [SVC]};
+      device = await navigator.bluetooth.requestDevice(opts);
+      device.addEventListener('gattserverdisconnected', onDisconnected);
+      log(`picked ${device.name || '(no name)'} id=${device.id}`);
+    }
+    await gattConnect();
+  } catch (e) { log('connect failed: ' + e.message); }
+}
+
+async function gattConnect() {
+  log('connecting...');
+  const server = await device.gatt.connect();
+  const svc = await server.getPrimaryService(SVC);
+  cmdChar = await svc.getCharacteristic(CMD_UUID);
+  uploadChar = await svc.getCharacteristic(UPLOAD_UUID).catch(() => null);
+  try {
+    notifyChar = await svc.getCharacteristic(NOTIFY_UUID);
+    notifyChar.addEventListener('characteristicvaluechanged', onNotify);
+    await notifyChar.startNotifications();
+  } catch (e) { log('notifications unavailable: ' + e.message); }
+  const p = cmdChar.properties;
+  log(`connected. cmd write=${p.write} writeNoResp=${p.writeWithoutResponse}; upload=${!!uploadChar}`);
+  manualDisconnect = false;
+  setConnected(true);
+}
+
+async function onDisconnected() {
+  setConnected(false);
+  stopParty();
+  if (manualDisconnect) { log('disconnected'); return; }
+  log('mask disconnected - retrying');
+  for (let i = 1; i <= 4; i++) {
+    await new Promise(r => setTimeout(r, 1000 * i));
+    try { await gattConnect(); return; } catch (e) { log(`retry ${i} failed: ${e.message}`); }
+  }
+  log('gave up - tap Reconnect');
+}
+
+async function writeChar(ch, data, preferResponse) {
+  const p = ch.properties;
+  if (preferResponse && p.write && ch.writeValueWithResponse) return ch.writeValueWithResponse(data);
+  if (p.writeWithoutResponse && ch.writeValueWithoutResponse) return ch.writeValueWithoutResponse(data);
+  if (ch.writeValueWithResponse) return ch.writeValueWithResponse(data);
+  return ch.writeValue(data);
+}
+
+// Serialize all GATT traffic: concurrent writes throw "GATT operation already in progress".
+let queue = Promise.resolve();
+function enqueue(fn) {
+  const run = queue.then(fn);
+  queue = run.catch(e => log('error: ' + e.message));
+  return run;
+}
+
+// Packet: [len][ASCII cmd][args] zero-padded to 16 bytes, AES-ECB encrypted, written to ...9600
+async function sendCmd(name, args = []) {
+  if (!connected) { log(`not connected (${name})`); return; }
+  const body = [...new TextEncoder().encode(name), ...args];
+  const pt = new Uint8Array(16);
+  pt[0] = body.length; pt.set(body, 1);
+  await writeChar(cmdChar, await ecbEnc(pt), true);
+  log(`→ ${name} ${args.join(',')}`);
+}
+const cmd = (name, args) => enqueue(() => sendCmd(name, args));
+
+// ---------- notifications ----------
+let waiters = [];
+function waitFor(pred, ms) {
+  return new Promise((resolve, reject) => {
+    const w = {pred, resolve};
+    waiters.push(w);
+    setTimeout(() => { if (waiters.includes(w)) { waiters = waiters.filter(x => x !== w); reject(new Error('timeout')); } }, ms);
+  });
+}
+async function onNotify(e) {
+  const v = e.target.value;
+  const raw = new Uint8Array(v.buffer, v.byteOffset, v.byteLength).slice();
+  let text = '';
+  try {
+    if (raw.length >= 16) {
+      const p = await ecbDec(raw.slice(0, 16));
+      text = new TextDecoder().decode(p.slice(1, 1 + Math.min(p[0], 15)));
+    }
+  } catch {}
+  if (!/^[A-Z]{3,}/.test(text)) text = new TextDecoder().decode(raw.slice(1)).replace(/[^\x20-\x7e]/g, '');
+  log(`← ${text || '?'} [${hex(raw)}]`);
+  const hit = waiters.find(w => w.pred(text));
+  if (hit) { waiters = waiters.filter(x => x !== hit); hit.resolve(text); }
+}
+
+// ---------- grids ----------
+function buildGrid(el, count, onPick) {
+  for (let i = 1; i <= count; i++) {
+    const b = document.createElement('button');
+    b.textContent = i;
+    b.onclick = () => { el.querySelectorAll('.sel').forEach(x => x.classList.remove('sel')); b.classList.add('sel'); onPick(i); };
+    el.appendChild(b);
+  }
+}
+function showAnim(n) { $('animNum').value = n; cmd('ANIM', [n]); }
+function showImg(n)  { $('imgNum').value = n;  cmd('IMAG', [n]); }
+buildGrid($('animGrid'), ANIM_COUNT, showAnim);
+buildGrid($('imgGrid'), IMG_COUNT, showImg);
+buildGrid($('diyGrid'), DIY_COUNT, n => cmd('PLAY', [1, n]));
+const rand = n => 1 + Math.floor(Math.random() * n);
+const clamp = n => Math.max(0, Math.min(255, n | 0));
+$('animPrev').onclick = () => showAnim(clamp(+$('animNum').value - 1));
+$('animNext').onclick = () => showAnim(clamp(+$('animNum').value + 1));
+$('animNum').onchange = () => showAnim(clamp(+$('animNum').value));
+$('animRand').onclick = () => showAnim(rand(ANIM_COUNT));
+$('imgPrev').onclick = () => showImg(clamp(+$('imgNum').value - 1));
+$('imgNext').onclick = () => showImg(clamp(+$('imgNum').value + 1));
+$('imgNum').onchange = () => showImg(clamp(+$('imgNum').value));
+$('imgRand').onclick = () => showImg(rand(IMG_COUNT));
+
+// ---------- brightness / speed / mode ----------
+$('light').oninput = () => $('lightVal').textContent = $('light').value;
+$('light').onchange = () => cmd('LIGHT', [+$('light').value]);
+$('speed').oninput = () => $('speedVal').textContent = $('speed').value;
+$('speed').onchange = () => cmd('SPEED', [+$('speed').value]);
+$('mode').onchange = () => cmd('MODE', [+$('mode').value]);
+
+const rgb = id => $(id).value.slice(1).match(/../g).map(h => parseInt(h, 16));
+$('fcOn').onclick  = () => cmd('FC', [1, ...rgb('fcColor')]);
+$('fcOff').onclick = () => cmd('FC', [0, 0, 0, 0]);
+$('fcColor').onchange = () => cmd('FC', [1, ...rgb('fcColor')]);
+$('bcOn').onclick  = () => cmd('BC', [1, ...rgb('bcColor')]);
+$('bcOff').onclick = () => cmd('BC', [0, 0, 0, 0]);
+$('bcColor').onchange = () => cmd('BC', [1, ...rgb('bcColor')]);
+$('mEffect').onchange = () => {
+  const m = +$('mEffect').value;
+  cmd('M', m < 0 ? [0, 0] : [1, m]);
+};
+
+// ---------- party mode ----------
+let partyTimer = null;
+function partyTick() {
+  const src = $('partySrc').value;
+  const useAnim = src === 'anim' || (src === 'both' && Math.random() < 0.5);
+  useAnim ? showAnim(rand(ANIM_COUNT)) : showImg(rand(IMG_COUNT));
+}
+function stopParty() { clearInterval(partyTimer); partyTimer = null; $('partyBtn').textContent = 'Start party mode'; }
+$('partyBtn').onclick = () => {
+  if (partyTimer) return stopParty();
+  const secs = Math.max(2, +$('partySecs').value || 8);
+  partyTick();
+  partyTimer = setInterval(partyTick, secs * 1000);
+  $('partyBtn').textContent = 'Stop party mode';
+};
+
+// ---------- scrolling text ----------
+// Bitmap: 16 rows high; per column 2 bytes: rows 0-7 (row 0 = 0x80), then rows 8-15 (row 8 = 0x80).
+// Followed by one RGB triple per column.
+function renderText() {
+  const text = $('txt').value || ' ';
+  const size = +$('fontSize').value;
+  const font = `bold ${size}px system-ui, sans-serif`;
+  const c = document.createElement('canvas');
+  let ctx = c.getContext('2d');
+  ctx.font = font;
+  const w = Math.max(1, Math.ceil(ctx.measureText(text).width) + 2);
+  c.width = w; c.height = 16;
+  ctx = c.getContext('2d', {willReadFrequently: true});
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, w, 16);
+  ctx.fillStyle = '#fff'; ctx.font = font; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 1, 8.5);
+  const d = ctx.getImageData(0, 0, w, 16).data;
+  const on = (x, y) => d[(y * w + x) * 4] > 110;
+  const base = rgb('txtColor');
+  const colors = [];
+  for (let x = 0; x < w; x++) colors.push($('rainbow').checked ? hsl((x * 9) % 360) : base);
+  return {w, on, colors};
+}
+function hsl(h) {
+  const f = n => { const k = (n + h / 30) % 12; return Math.round(255 * (0.5 - 0.5 * Math.max(-1, Math.min(k - 3, 9 - k, 1)))); };
+  return [f(0), f(8), f(4)];
+}
+function drawPreview() {
+  const {w, on, colors} = renderText();
+  const cv = $('preview'), S = 4;
+  cv.width = w * S; cv.height = 16 * S;
+  const ctx = cv.getContext('2d');
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, cv.width, cv.height);
+  for (let x = 0; x < w; x++) for (let y = 0; y < 16; y++) if (on(x, y)) {
+    ctx.fillStyle = `rgb(${colors[x].join(',')})`; ctx.fillRect(x * S, y * S, S - 1, S - 1);
+  }
+}
+['txt', 'txtColor', 'rainbow', 'fontSize'].forEach(id => $(id).addEventListener('input', drawPreview));
+drawPreview();
+
+async function uploadText() {
+  if (!connected) { log('not connected'); return; }
+  if (!uploadChar) { log('upload characteristic missing'); return; }
+  const {w, on, colors} = renderText();
+  const swap = $('swapBytes').checked;
+  const bmp = new Uint8Array(w * 2), col = new Uint8Array(w * 3);
+  for (let x = 0; x < w; x++) {
+    let a = 0, b = 0;
+    for (let y = 0; y < 8; y++) if (on(x, y)) a |= 0x80 >> y;
+    for (let y = 8; y < 16; y++) if (on(x, y)) b |= 0x80 >> (y - 8);
+    if (swap) [a, b] = [b, a];
+    bmp[2 * x] = a; bmp[2 * x + 1] = b;
+    col.set(colors[x], 3 * x);
+  }
+  const data = new Uint8Array(bmp.length + col.length);
+  data.set(bmp); data.set(col, bmp.length);
+  const total = data.length, bl = bmp.length;
+  log(`uploading text: ${w} columns, ${total} bytes`);
+
+  const ok1 = waitFor(s => s.startsWith('DATS'), 3000);
+  await sendCmd('DATS', [total >> 8, total & 255, bl >> 8, bl & 255, 0]);
+  await ok1.catch(() => log('no DATSOK - continuing anyway'));
+
+  for (let off = 0, n = 0; off < data.length; off += 98, n++) {
+    const chunk = data.slice(off, off + 98);
+    const pkt = new Uint8Array(chunk.length + 2);
+    pkt[0] = chunk.length + 1; pkt[1] = n; pkt.set(chunk, 2);
+    const ack = waitFor(s => s.startsWith('REOK'), 3000);
+    await writeChar(uploadChar, pkt, false);
+    await ack.catch(() => log(`no REOK for chunk ${n} - continuing`));
+  }
+
+  const done = waitFor(s => s.startsWith('DATCP'), 3000);
+  await sendCmd('DATCP');
+  try { await done; }
+  catch {
+    log('no DATCPOK - retrying DATCP with timestamp');
+    const t = Math.floor(Date.now() / 1000);
+    const done2 = waitFor(s => s.startsWith('DATCP'), 3000);
+    await sendCmd('DATCP', [(t >>> 24) & 255, (t >>> 16) & 255, (t >>> 8) & 255, t & 255]);
+    await done2.catch(() => log('still no DATCPOK'));
+  }
+  await sendCmd('MODE', [+$('mode').value]);
+  await sendCmd('SPEED', [+$('speed').value]);
+  log('text sent');
+}
+$('btnUpload').onclick = () => { stopParty(); enqueue(uploadText); };
+
+// ---------- connection buttons ----------
+$('btnConnect').onclick = () => connected ? null : connect(false);
+$('btnAll').onclick = () => connect(true);
+$('btnDisc').onclick = () => { manualDisconnect = true; stopParty(); device?.gatt?.connected && device.gatt.disconnect(); };
+
+initCrypto().then(() => log(navigator.bluetooth ? 'ready - tap Connect' : 'Web Bluetooth not supported in this browser'));
+</script>
+</body>
+</html>
