@@ -56,7 +56,7 @@ body.off .needs{opacity:.45}
   <h2>Animations</h2>
   <div class="row">
     <button id="animPrev">◀</button>
-    <input type="number" id="animNum" min="0" max="255" value="1">
+    <input type="number" id="animNum" min="1" max="45" value="1">
     <button id="animNext">▶</button>
     <button id="animRand" class="grow">Random</button>
   </div>
@@ -67,7 +67,7 @@ body.off .needs{opacity:.45}
   <h2>Faces (still images)</h2>
   <div class="row">
     <button id="imgPrev">◀</button>
-    <input type="number" id="imgNum" min="0" max="255" value="1">
+    <input type="number" id="imgNum" min="1" max="69" value="1">
     <button id="imgNext">▶</button>
     <button id="imgRand" class="grow">Random</button>
   </div>
@@ -167,7 +167,9 @@ const NOTIFY_UUID = 'd44bc439-abfd-45a2-b575-925416129601';
 const UPLOAD_UUID = 'd44bc439-abfd-45a2-b575-92541612960a';
 // Fixed AES-128 key shared by every Shining Mask (public; see docs/systems/halloween-mask.md)
 const KEY = new Uint8Array('32672f7974ad43451d9c6c894a0e8764'.match(/../g).map(h => parseInt(h, 16)));
-const IMG_COUNT = 105, ANIM_COUNT = 69, DIY_COUNT = 20;
+// Counts confirmed on our mask (2026-10-31). The BrickCraftDream doc's 0x69/0x45 thresholds are these
+// same digits read as hex; numbers past the end read out-of-bounds memory and show garbled dots.
+const IMG_COUNT = 69, ANIM_COUNT = 45, DIY_COUNT = 20;
 
 const $ = id => document.getElementById(id);
 const logEl = $('log');
@@ -323,14 +325,15 @@ buildGrid($('animGrid'), ANIM_COUNT, showAnim);
 buildGrid($('imgGrid'), IMG_COUNT, showImg);
 buildGrid($('diyGrid'), DIY_COUNT, n => cmd('PLAY', [1, n]));
 const rand = n => 1 + Math.floor(Math.random() * n);
-const clamp = n => Math.max(0, Math.min(255, n | 0));
-$('animPrev').onclick = () => showAnim(clamp(+$('animNum').value - 1));
-$('animNext').onclick = () => showAnim(clamp(+$('animNum').value + 1));
-$('animNum').onchange = () => showAnim(clamp(+$('animNum').value));
+// Wrap within 1..max so stepping never lands on out-of-bounds (garbled) numbers.
+const wrap = (n, max) => ((((n | 0) - 1) % max) + max) % max + 1;
+$('animPrev').onclick = () => showAnim(wrap(+$('animNum').value - 1, ANIM_COUNT));
+$('animNext').onclick = () => showAnim(wrap(+$('animNum').value + 1, ANIM_COUNT));
+$('animNum').onchange = () => showAnim(wrap(+$('animNum').value, ANIM_COUNT));
 $('animRand').onclick = () => showAnim(rand(ANIM_COUNT));
-$('imgPrev').onclick = () => showImg(clamp(+$('imgNum').value - 1));
-$('imgNext').onclick = () => showImg(clamp(+$('imgNum').value + 1));
-$('imgNum').onchange = () => showImg(clamp(+$('imgNum').value));
+$('imgPrev').onclick = () => showImg(wrap(+$('imgNum').value - 1, IMG_COUNT));
+$('imgNext').onclick = () => showImg(wrap(+$('imgNum').value + 1, IMG_COUNT));
+$('imgNum').onchange = () => showImg(wrap(+$('imgNum').value, IMG_COUNT));
 $('imgRand').onclick = () => showImg(rand(IMG_COUNT));
 
 // ---------- brightness / speed / mode ----------
